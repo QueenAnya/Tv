@@ -232,7 +232,6 @@ export const encodeBinaryNode = (
 		writeByteLength(content.length)
 		pushBytes(content)
 	} else if(Array.isArray(content)) {
-import { ILogger } from './logger'
 		const validContent = content.filter(item => item && (item.tag || Buffer.isBuffer(item) || item instanceof Uint8Array || typeof item === 'string')
 		)
 		writeListStart(validContent.length)
