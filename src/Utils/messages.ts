@@ -860,7 +860,7 @@ export const generateWAMessageFromContent = (
 		key: {
 			remoteJid: jid,
 			fromMe: true,
-			id: options?.messageId || generateMessageID(),
+			id: options?.messageId || generateMessageIDV2(),
 		},
 		message: message,
 		messageTimestamp: timestamp,
