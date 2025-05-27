@@ -6,7 +6,7 @@ import { join } from 'path'
 import { CatalogCollection, CatalogStatus, OrderDetails, OrderProduct, Product, ProductCreate, ProductUpdate, WAMediaUpload, WAMediaUploadFunction } from '../Types'
 import { BinaryNode, getBinaryNodeChild, getBinaryNodeChildren, getBinaryNodeChildString } from '../WABinary'
 import { generateMessageIDV2 } from './generics'
-import { getStream, getUrlFromDirectPath } from './messages-media'
+import { getStream, getUrlFromDirectPath, toReadable } from './messages-media'
 
 export const parseCatalogNode = (node: BinaryNode) => {
 	const catalogNode = getBinaryNodeChild(node, 'product_catalog')
@@ -242,16 +242,18 @@ export const uploadingNecessaryImages = async(
 
 				const filePath = join(tmpdir(), 'img' + generateMessageIDV2())
 				const encFileWriteStream = createWriteStream(filePath)
+				const contentBlocks: Buffer[] = []
 
 				for await (const block of stream) {
 					hasher.update(block)
 					encFileWriteStream.write(block)
+					contentBlocks.push(block)
 				}
 
 				const sha = hasher.digest('base64')
 
 				const { directPath } = await waUploadToServer(
-					filePath,
+					toReadable(Buffer.concat(contentBlocks)),
 					{
 						mediaType: 'product-catalog-image',
 						fileEncSha256B64: sha,
