@@ -400,7 +400,6 @@ export const generateWAMessageContent = async(
 		m.groupInviteMessage.inviteCode = message.groupInvite.inviteCode
 		m.groupInviteMessage.inviteExpiration = message.groupInvite.inviteExpiration
 		m.groupInviteMessage.caption = message.groupInvite.text
-
 		m.groupInviteMessage.groupJid = message.groupInvite.jid
 		m.groupInviteMessage.groupName = message.groupInvite.subject
 		//TODO: use built-in interface and get disappearing mode info etc.
@@ -417,22 +416,29 @@ export const generateWAMessageContent = async(
 	} else if('pin' in message) {
 		m.pinInChatMessage = {}
 		m.messageContextInfo = {}
-
 		m.pinInChatMessage.key = message.pin
-		m.pinInChatMessage.type = 1
+		m.pinInChatMessage.type = message.type
 		m.pinInChatMessage.senderTimestampMs = Date.now()
-
-		m.messageContextInfo.messageAddOnDurationInSecs = message.time || 86400
-	} else if('unpin' in message){
-		m.pinInChatMessage = {}
-		m.messageContextInfo = {}
-
-		m.pinInChatMessage.key = message.unpin
-		m.pinInChatMessage.type = 2
-		m.pinInChatMessage.senderTimestampMs = Date.now()
-
-		m.messageContextInfo.messageAddOnDurationInSecs = 0
-	}  else if('buttonReply' in message) {
+		m.messageContextInfo.messageAddOnDurationInSecs = message.type === 1 ? message.time || 86400 : 0
+	} else if('keep' in message) {
+		m.keepInChatMessage = {};
+		m.keepInChatMessage.key = message.keep;
+		m.keepInChatMessage.keepType = message.type;
+		m.keepInChatMessage.timestampMs = Date.now();
+	} else if('call' in message) {
+		m = {
+			scheduledCallCreationMessage: {
+				scheduledTimestampMs: message.call.time ?? Date.now(),
+				callType: message.call.type ?? 1, 
+				title: message.call.title
+			}
+		}
+	} else if ('paymentInvite' in message) {
+		m.paymentInviteMessage = {
+			serviceType: message.paymentInvite.type, 
+			expiryTimestamp: message.paymentInvite.expiry
+		}
+	} else if('buttonReply' in message) {
 		switch (message.type) {
 		case 'template':
 			m.templateButtonReplyMessage = {
@@ -467,6 +473,20 @@ export const generateWAMessageContent = async(
 				productImage: imageMessage,
 			}
 		})
+	} else if ('order' in message) {
+		m.orderMessage = WAProto.Message.OrderMessage.fromObject({
+			orderId: message.order.id,
+			thumbnail: message.order.thumbnail,
+			itemCount: message.order.itemCount,
+			status: message.order.status,
+			surface: message.order.surface,
+			orderTitle: message.order.title,
+			message: message.order.text,
+			sellerJid: message.order.seller,
+			token: message.order.token,
+			totalAmount1000: message.order.amount,
+			totalCurrencyCode: message.order.currency
+		})
 	} else if('listReply' in message) {
 		m.listResponseMessage = { ...message.listReply }
 	} else if('poll' in message) {
@@ -497,19 +517,64 @@ export const generateWAMessageContent = async(
 			selectableOptionsCount: message.poll.selectableCount,
 			options: message.poll.values.map(optionName => ({ optionName })),
 		}
-
+		
 		if(message.poll.toAnnouncementGroup) {
 			// poll v2 is for community announcement groups (single select and multiple)
 			m.pollCreationMessageV2 = pollCreationMessage
 		} else {
 			if(message.poll.selectableCount > 0) {
-				//poll v3 is for single select polls
+				// poll v3 is for single select polls
 				m.pollCreationMessageV3 = pollCreationMessage
 			} else {
 				// poll v3 for multiple choice polls
 				m.pollCreationMessage = pollCreationMessage
 			}
 		}
+	} else if('event' in message) {
+		m.messageContextInfo = {
+			messageSecret: message.event.messageSecret || randomBytes(32), 
+		}
+		m.eventMessage = { ...message.event }
+	} else if('inviteAdmin' in message) {
+		m.newsletterAdminInviteMessage = {};
+		m.newsletterAdminInviteMessage.inviteExpiration = message.inviteAdmin.inviteExpiration;
+		m.newsletterAdminInviteMessage.caption = message.inviteAdmin.text;
+		m.newsletterAdminInviteMessage.newsletterJid = message.inviteAdmin.jid;
+		m.newsletterAdminInviteMessage.newsletterName = message.inviteAdmin.subject;
+		m.newsletterAdminInviteMessage.jpegThumbnail = message.inviteAdmin.thumbnail;
+	} else if ('requestPayment' in message) {  
+		const sticker = message?.requestPayment?.sticker ?
+			await prepareWAMessageMedia(
+				{ sticker: message?.requestPayment?.sticker, ...options },
+				options
+			)
+			: null
+		let notes = {}
+		if(message?.requestPayment?.sticker) {
+			notes = {
+				stickerMessage: {
+					...sticker?.stickerMessage,
+					contextInfo: message?.requestPayment?.contextInfo
+				}
+			}
+		} else if(message.requestPayment.note) {
+			notes = {
+				extendedTextMessage: {
+					text: message.requestPayment.note,
+					contextInfo: message?.requestPayment?.contextInfo,
+				}
+			}
+		} else {
+			throw new Boom('Invalid media type', { statusCode: 400 })
+		}
+		m.requestPaymentMessage = WAProto.Message.RequestPaymentMessage.fromObject({
+			expiryTimestamp: message.requestPayment.expiry,
+			amount1000: message.requestPayment.amount,
+			currencyCodeIso4217: message.requestPayment.currency,
+			requestFrom: message.requestPayment.from,
+			noteMessage: { ...notes },
+			background: message.requestPayment.background ?? null,
+		})
 	} else if('sharePhoneNumber' in message) {
 		m.protocolMessage = {
 			type: proto.Message.ProtocolMessage.Type.SHARE_PHONE_NUMBER
@@ -521,6 +586,179 @@ export const generateWAMessageContent = async(
 			message,
 			options
 		)
+	}
+
+	if('buttons' in message && !!message.buttons) {
+		const buttonsMessage: proto.Message.IButtonsMessage = {
+			buttons: message.buttons!.map(b => ({ ...b, type: proto.Message.ButtonsMessage.Button.Type.RESPONSE }))
+		}
+		if('text' in message) {
+			buttonsMessage.contentText = message.text
+			buttonsMessage.headerType = ButtonType.EMPTY
+		} else {
+			if('caption' in message) {
+				buttonsMessage.contentText = message.caption
+			}
+
+			const type = Object.keys(m)[0].replace('Message', '').toUpperCase()
+			buttonsMessage.headerType = ButtonType[type]
+
+			Object.assign(buttonsMessage, m)
+		}
+
+		if('title' in message && !!message.title) {
+			buttonsMessage.text = message.title,
+			buttonsMessage.headerType = ButtonType.TEXT
+		}
+
+		if('footer' in message && !!message.footer) {
+			buttonsMessage.footerText = message.footer
+		}
+
+		if('contextInfo' in message && !!message.contextInfo) {
+			buttonsMessage.contextInfo = message.contextInfo
+		}
+
+		if('mentions' in message && !!message.mentions) {
+			buttonsMessage.contextInfo = { mentionedJid: message.mentions }
+		}
+
+		m = { buttonsMessage }
+	} else if('templateButtons' in message && !!message.templateButtons) {
+		const msg: proto.Message.TemplateMessage.IHydratedFourRowTemplate = {
+			hydratedButtons: message.hasOwnProperty("templateButtons") ? message.templateButtons : message.templateButtons
+		}
+
+		if('text' in message) {
+			msg.hydratedContentText = message.text
+		} else {
+
+			if('caption' in message) {
+				msg.hydratedContentText = message.caption
+			}
+
+			Object.assign(msg, m)
+		}
+
+		if('footer' in message && !!message.footer) {
+			msg.hydratedFooterText = message.footer
+		}
+
+		m = {
+			templateMessage: {
+				fourRowTemplate: msg,
+				hydratedTemplate: msg
+			}
+		}
+	}
+
+	if('sections' in message && !!message.sections) {
+		const listMessage: proto.Message.IListMessage = {
+			sections: message.sections,
+			buttonText: message.buttonText,
+			title: message.title,
+			footerText: message.footer,
+			description: message.text,
+			listType: message.hasOwnProperty('listType') ? message.listType : proto.Message.ListMessage.ListType.PRODUCT_LIST
+		}
+
+		m = { listMessage }
+	}
+
+	if ('interactiveButtons' in message && !!message.interactiveButtons) {
+		const interactiveMessage: proto.Message.IInteractiveMessage = {
+			nativeFlowMessage: WAProto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+				buttons: message.interactiveButtons,
+			})
+		};
+
+		if ('text' in message) {
+			interactiveMessage.body = {
+				text: message.text
+			};
+		} else if ('caption' in message) {
+			interactiveMessage.body = {
+				text: message.caption
+			}
+
+			interactiveMessage.header = {
+				title: message.title,
+				subtitle: message.subtitle,
+				hasMediaAttachment: message?.media ?? false,
+			};
+
+			Object.assign(interactiveMessage.header, m);
+		}
+
+		if ('footer' in message && !!message.footer) {
+			interactiveMessage.footer = {
+				text: message.footer
+			};
+		}
+
+		if ('title' in message && !!message.title) {
+			interactiveMessage.header = {
+				title: message.title,
+				subtitle: message.subtitle,
+				hasMediaAttachment: message?.media ?? false,
+			};
+
+			Object.assign(interactiveMessage.header, m);
+		}
+
+		if ('contextInfo' in message && !!message.contextInfo) {
+			interactiveMessage.contextInfo = message.contextInfo;
+		}
+
+		if ('mentions' in message && !!message.mentions) {
+			interactiveMessage.contextInfo = { mentionedJid: message.mentions };
+		}
+
+		m = { interactiveMessage };
+	}
+
+	if ('shop' in message && !!message.shop) {
+		const interactiveMessage: proto.Message.IInteractiveMessage = {
+			shopStorefrontMessage: WAProto.Message.InteractiveMessage.ShopMessage.fromObject({
+				surface: message.shop,
+				id: message.id
+			})
+		};
+		if ('text' in message) {
+			interactiveMessage.body = {
+				text: message.text
+			};
+		} else if ('caption' in message) {
+			interactiveMessage.body = {
+				text: message.caption
+			}
+			interactiveMessage.header = {
+				title: message.title,
+				subtitle: message.subtitle,
+				hasMediaAttachment: message?.media ?? false,
+			};
+			Object.assign(interactiveMessage.header, m);
+		}
+		if ('footer' in message && !!message.footer) {
+			interactiveMessage.footer = {
+				text: message.footer
+			};
+		}
+		if ('title' in message && !!message.title) {
+			interactiveMessage.header = {
+				title: message.title,
+				subtitle: message.subtitle,
+				hasMediaAttachment: message?.media ?? false,
+			};
+			Object.assign(interactiveMessage.header, m);
+		}
+		if ('contextInfo' in message && !!message.contextInfo) {
+			interactiveMessage.contextInfo = message.contextInfo;
+		}
+		if ('mentions' in message && !!message.mentions) {
+			interactiveMessage.contextInfo = { mentionedJid: message.mentions };
+		}
+		m = { interactiveMessage };
 	}
 
 	if('viewOnce' in message && !!message.viewOnce) {
@@ -576,25 +814,27 @@ export const generateWAMessageFromContent = (
 		let quotedMsg = normalizeMessageContent(quoted.message)!
 		const msgType = getContentType(quotedMsg)!
 		// strip any redundant properties
-		quotedMsg = proto.Message.fromObject({ [msgType]: quotedMsg[msgType] })
+		if(quotedMsg) {
+			quotedMsg = proto.Message.fromObject({ [msgType]: quotedMsg[msgType] })
 
-		const quotedContent = quotedMsg[msgType]
-		if(typeof quotedContent === 'object' && quotedContent && 'contextInfo' in quotedContent) {
-			delete quotedContent.contextInfo
+			const quotedContent = quotedMsg[msgType]
+			if(typeof quotedContent === 'object' && quotedContent && 'contextInfo' in quotedContent) {
+				delete quotedContent.contextInfo
+			}
+
+			const contextInfo: proto.IContextInfo = innerMessage[key].contextInfo || { }
+			contextInfo.participant = jidNormalizedUser(participant!)
+			contextInfo.stanzaId = quoted.key.id
+			contextInfo.quotedMessage = quotedMsg
+
+			// if a participant is quoted, then it must be a group
+			// hence, remoteJid of group must also be entered
+			if(jid !== quoted.key.remoteJid) {
+				contextInfo.remoteJid = quoted.key.remoteJid
+			}
+
+			innerMessage[key].contextInfo = contextInfo
 		}
-
-		const contextInfo: proto.IContextInfo = innerMessage[key].contextInfo || { }
-		contextInfo.participant = jidNormalizedUser(participant!)
-		contextInfo.stanzaId = quoted.key.id
-		contextInfo.quotedMessage = quotedMsg
-
-		// if a participant is quoted, then it must be a group
-		// hence, remoteJid of group must also be entered
-		if(jid !== quoted.key.remoteJid) {
-			contextInfo.remoteJid = quoted.key.remoteJid
-		}
-
-		innerMessage[key].contextInfo = contextInfo
 	}
 
 	if(
@@ -620,7 +860,7 @@ export const generateWAMessageFromContent = (
 		key: {
 			remoteJid: jid,
 			fromMe: true,
-			id: options?.messageId || generateMessageIDV2(),
+			id: options?.messageId || generateMessageID(),
 		},
 		message: message,
 		messageTimestamp: timestamp,
@@ -646,6 +886,15 @@ export const generateWAMessage = async(
 		),
 		options
 	)
+}
+
+/** Get the key to access the true type of content */
+export const getContentType = (content: WAProto.IMessage | undefined) => {
+	if(content) {
+		const keys = Object.keys(content)
+		const key = keys.find(k => (k === 'conversation' || k.includes('Message')) && k !== 'senderKeyDistributionMessage')
+		return key as keyof typeof content
+	}
 }
 
 /** Get the key to access the true type of content */
