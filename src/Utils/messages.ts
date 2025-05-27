@@ -899,15 +899,6 @@ export const getContentType = (content: WAProto.IMessage | undefined) => {
 	}
 }
 
-/** Get the key to access the true type of content */
-export const getContentType = (content: WAProto.IMessage | undefined) => {
-	if(content) {
-		const keys = Object.keys(content)
-		const key = keys.find(k => (k === 'conversation' || k.includes('Message')) && k !== 'senderKeyDistributionMessage')
-		return key as keyof typeof content
-	}
-}
-
 /**
  * Normalizes ephemeral, view once messages to regular message content
  * Eg. image messages in ephemeral messages, in view once messages etc.
