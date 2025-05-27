@@ -300,22 +300,13 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		message: proto.IMessage,
 		extraAttrs?: BinaryNode['attrs']
 	) => {
-		let patched = await patchMessageBeforeSending(message, jids)
-		if(!Array.isArray(patched)) {
-		  patched = jids ? jids.map(jid => ({ recipientJid: jid, ...patched })) : [patched]
-		}
+		const patched = await patchMessageBeforeSending(message, jids)
+		const bytes = encodeWAMessage(patched)
 
 		let shouldIncludeDeviceIdentity = false
-
 		const nodes = await Promise.all(
-			patched.map(
-				async patchedMessageWithJid => {
-					const { recipientJid: jid, ...patchedMessage } = patchedMessageWithJid
-					if(!jid) {
-					  return {} as BinaryNode
-					}
-
-					const bytes = encodeWAMessage(patchedMessage)
+			jids.map(
+				async jid => {
 					const { type, ciphertext } = await signalRepository
 						.encryptMessage({ jid, data: bytes })
 					if(type === 'pkmsg') {
@@ -438,12 +429,7 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 						devices.push(...additionalDevices)
 					}
 
-					const patched = await patchMessageBeforeSending(message)
-
-					if(Array.isArray(patched)) {
-					  throw new Boom('Per-jid patching is not supported in groups')
-					}
-
+					const patched = await patchMessageBeforeSending(message, devices.map(d => jidEncode(d.user, isLid ? 'lid' : 's.whatsapp.net', d.device)))
 					const bytes = encodeWAMessage(patched)
 
 					const { ciphertext, senderKeyDistributionMessage } = await signalRepository.encryptGroupMessage(
