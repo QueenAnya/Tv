@@ -59,10 +59,8 @@ const MessageTypeProto = {
 	'video': WAProto.Message.VideoMessage,
 	'audio': WAProto.Message.AudioMessage,
 	'sticker': WAProto.Message.StickerMessage,
-	'document': WAProto.Message.DocumentMessage,
+   	'document': WAProto.Message.DocumentMessage,
 } as const
-
-const ButtonType = proto.Message.ButtonsMessage.HeaderType
 
 /**
  * Uses a regex to test whether the string contains a URL, and returns the URL if it does.
