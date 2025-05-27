@@ -723,35 +723,43 @@ export const getWAUploadToServer = (
 	{ customUploadHosts, fetchAgent, logger, options }: SocketConfig,
 	refreshMediaConn: (force: boolean) => Promise<MediaConnInfo>,
 ): WAMediaUploadFunction => {
-	return async(filePath, { mediaType, fileEncSha256B64, newsletter, timeoutMs }) => {
+	return async(stream, { mediaType, fileEncSha256B64, newsletter, timeoutMs }) => {
 		// send a query JSON to obtain the url & auth token to upload our media
 		let uploadInfo = await refreshMediaConn(false)
 
 		let urls: { mediaUrl: string, directPath: string, handle?: string } | undefined
 		const hosts = [ ...customUploadHosts, ...uploadInfo.hosts ]
 
+		const chunks: Buffer[] | Buffer = []
+		if (!Buffer.isBuffer(stream)) {
+			for await (const chunk of stream) {
+				chunks.push(chunk)
+			}
+		}
+
+		const reqBody = Buffer.isBuffer(stream) ? stream : Buffer.concat(chunks)
 		fileEncSha256B64 = encodeBase64EncodedStringForUpload(fileEncSha256B64)
-		
 		let media = MEDIA_PATH_MAP[mediaType]
 		if (newsletter) {
 			media = media?.replace('/mms/', '/newsletter/newsletter-')
 		}
 
-		for(const { hostname } of hosts) {
+		for(const { hostname, maxContentLengthBytes } of hosts) {
 			logger.debug(`uploading to "${hostname}"`)
 
 			const auth = encodeURIComponent(uploadInfo.auth) // the auth token
-			const url = `https://${hostname}${MEDIA_PATH_MAP[mediaType]}/${fileEncSha256B64}?auth=${auth}&token=${fileEncSha256B64}`
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const url = `https://${hostname}${media}/${fileEncSha256B64}?auth=${auth}&token=${fileEncSha256B64}`
 			let result: any
 			try {
+				if(maxContentLengthBytes && reqBody.length > maxContentLengthBytes) {
+					throw new Boom(`Body too large for "${hostname}"`, { statusCode: 413 })
+				}
 
 				const body = await axios.post(
 					url,
-					createReadStream(filePath),
+					reqBody,
 					{
 						...options,
-						maxRedirects: 0,
 						headers: {
 							...options.headers || { },
 							'Content-Type': 'application/octet-stream',
